@@ -1,7 +1,7 @@
 import datetime
 import json
-import time
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, TypedDict
 from urllib.parse import urljoin
@@ -200,15 +200,18 @@ class VoebbScraperHomeAssistant:
         self,
     ):
         self.supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
-        mqtt_service_info = requests.get("http://supervisor/services/mqtt", headers={"Authorization": f"Bearer ${self.supervisor_token}"}).json()
+        mqtt_service_info = requests.get(
+            "http://supervisor/services/mqtt",
+            headers={"Authorization": f"Bearer {self.supervisor_token}"},
+        ).json()
 
         with open("/data/options.json") as f:
             self.config = json.load(f)
 
-        self.mqtt_host = mqtt_service_info[0]["host"]
-        self.mqtt_port = mqtt_service_info[0]["port"]
-        self.mqtt_username = mqtt_service_info[0]["username"]
-        self.mqtt_password = mqtt_service_info[0]["password"]
+        self.mqtt_host = mqtt_service_info["host"]
+        self.mqtt_port = mqtt_service_info["port"]
+        self.mqtt_username = mqtt_service_info["username"]
+        self.mqtt_password = mqtt_service_info["password"]
 
         self.client = mqtt.Client()
         self.connect_mqtt()
