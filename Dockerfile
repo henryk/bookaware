@@ -6,7 +6,7 @@ RUN \
     python3 py3-pip py3-virtualenv
 
 RUN python3 -m venv /venv
-COPY bookaware poetry.lock pyproject.toml /
+COPY bookaware README.md poetry.lock pyproject.toml /
 RUN /venv/bin/pip install .
 
 CMD [ "/venv/bin/python", "-m", "bookaware.main" ]
