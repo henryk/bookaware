@@ -1,25 +1,25 @@
-from typing import Optional, Dict, List
+import datetime
+import json
+import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from urllib.parse import urljoin
 
+import paho.mqtt.client as mqtt
 import requests
 import structlog
-import datetime
 from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
-from urllib.parse import urljoin
 
 logger = structlog.get_logger(__name__)
 
 
-class WebScraper:
-    def __init__(self, start_url: str, username: str, password: str) -> None:
-        self.current_url = start_url
+class VoebbScraper:
+    def __init__(self, username: str, password: str) -> None:
+        self.current_url = "https://voebb.de/"
+        self.last_response: Optional[str] = None
         self.username = username
         self.password = password
         self.session = requests.Session()
-        self.session.headers.update(
-            {"User-Agent": UserAgent().random}
-        )
-        self.data: Optional[str] = None
         self.logger = logger.bind()
 
     def load_page(self) -> bytes:
@@ -29,20 +29,26 @@ class WebScraper:
         self.logger.info("Loading page", url=self.current_url)
         response = self.session.get(self.current_url)
         if response.status_code == 200:
-            self.logger.info("Page loaded successfully", status_code=response.status_code, url=response.url)
+            self.logger.info(
+                "Page loaded successfully",
+                status_code=response.status_code,
+                url=response.url,
+            )
             self.current_url = response.url
-            self.data = response.content
-            return self.data
+            self.last_response = response.content
+            return self.last_response
         else:
             self.logger.error("Failed to load page", status_code=response.status_code)
             raise Exception(f"Failed to load page: {response.status_code}")
 
-    def find_and_submit_form(self, values: Dict[str, str], button: Optional[str] = None) -> requests.Response:
+    def find_and_submit_form(
+        self, values: Dict[str, str], button: Optional[str] = None
+    ) -> requests.Response:
         """
         Find the first form on the page and submit login credentials.
         """
         self.logger.info("Finding and submitting form", current_url=self.current_url)
-        soup = BeautifulSoup(self.data, "lxml")
+        soup = BeautifulSoup(self.last_response, "lxml")
         form = soup.find("form")
         if not form:
             self.logger.error("No form found on the page")
@@ -71,12 +77,16 @@ class WebScraper:
         self.logger.info("Submitting form", url=action_url, payload=payload)
         response = self.session.post(action_url, data=payload)
         if response.status_code == 200:
-            self.logger.info("Form submitted successfully", status_code=response.status_code)
+            self.logger.info(
+                "Form submitted successfully", status_code=response.status_code
+            )
             self.current_url = response.url
-            self.data = response.content
-            return self.data
+            self.last_response = response.content
+            return self.last_response
         else:
-            self.logger.error("Form submission failed", status_code=response.status_code)
+            self.logger.error(
+                "Form submission failed", status_code=response.status_code
+            )
             raise Exception(f"Login failed: {response.status_code}")
 
     def scrape_after_login(self, url: str) -> bytes:
@@ -86,11 +96,15 @@ class WebScraper:
         self.logger.info("Scraping after login", url=url)
         response = self.session.get(url)
         if response.status_code == 200:
-            self.logger.info("Data retrieved successfully", status_code=response.status_code)
+            self.logger.info(
+                "Data retrieved successfully", status_code=response.status_code
+            )
             print("Data successfully retrieved.")
             return response.content
         else:
-            self.logger.error("Failed to scrape after login", status_code=response.status_code)
+            self.logger.error(
+                "Failed to scrape after login", status_code=response.status_code
+            )
             raise Exception(f"Failed to access {url}: {response.status_code}")
 
     def find_and_follow_link(self, css_selector: str) -> bytes:
@@ -98,10 +112,12 @@ class WebScraper:
         Finds a link on the page using the provided CSS selector and follows it.
         """
         self.logger.info("Attempting to find and follow link", selector=css_selector)
-        soup = BeautifulSoup(self.data, "lxml")
+        soup = BeautifulSoup(self.last_response, "lxml")
         link = soup.select_one(css_selector)
         if not link:
-            self.logger.error("No link found with the given CSS selector", selector=css_selector)
+            self.logger.error(
+                "No link found with the given CSS selector", selector=css_selector
+            )
             raise Exception(f"No link found with the selector: {css_selector}")
 
         href = link.get("href")
@@ -114,16 +130,22 @@ class WebScraper:
         self.logger.info("Following link", target_url=target_url)
         response = self.session.get(target_url)
         if response.status_code == 200:
-            self.logger.info("Successfully navigated to the link", target_url=target_url)
+            self.logger.info(
+                "Successfully navigated to the link", target_url=target_url
+            )
             self.current_url = response.url
-            self.data = response.content
-            return self.data
+            self.last_response = response.content
+            return self.last_response
         else:
-            self.logger.error("Failed to navigate to the link", status_code=response.status_code, target_url=target_url)
+            self.logger.error(
+                "Failed to navigate to the link",
+                status_code=response.status_code,
+                target_url=target_url,
+            )
             raise Exception(f"Failed to follow link: {response.status_code}")
 
     def extract_table(self) -> List[dict]:
-        soup = BeautifulSoup(self.data, "lxml")
+        soup = BeautifulSoup(self.last_response, "lxml")
 
         items = []
         for tr in soup.select("#resptable-1 tbody tr"):
@@ -133,13 +155,15 @@ class WebScraper:
             library = tds[2].get_text(strip=True)
             title = " ".join(tds[3].stripped_strings)
             hint = tds[4].get_text(strip=True)
-            items.append({
-                "due_date": due_date,
-                "library": library,
-                "title": title,
-                "hint": hint,
-                "days_left": (due_date - datetime.date.today()).days
-            })
+            items.append(
+                {
+                    "due_date": due_date.isoformat(),
+                    "library": library,
+                    "title": title,
+                    "hint": hint,
+                    "days_left": (due_date - datetime.date.today()).days,
+                }
+            )
         return items
 
     def run(self) -> None:
@@ -150,19 +174,130 @@ class WebScraper:
         try:
             self.load_page()
             self.find_and_submit_form({"selected": "ZTEXT       *SBK"})
-            self.find_and_submit_form({"L#AUSW": self.username, "LPASSW": self.password}, "LLOGIN")
+            self.find_and_submit_form(
+                {"L#AUSW": self.username, "LPASSW": self.password}, "LLOGIN"
+            )
             self.find_and_follow_link('div#konto-services li a[href*="S*SZA"]')
             outstanding_books = self.extract_table()
-            import pprint; pprint.pprint(outstanding_books)
+            import pprint
+
+            pprint.pprint(outstanding_books)
         except Exception as e:
             self.logger.error("Error occurred during scraping process", error=str(e))
             print(f"Error: {e}")
 
 
+class HomeAssistantMQTTDaemon:
+    def __init__(
+        self,
+        mqtt_broker: str,
+        mqtt_port: int,
+        scraper_instance,
+        username: str = None,
+        password: str = None,
+    ):
+        self.mqtt_broker = mqtt_broker
+        self.mqtt_port = mqtt_port
+        self.scraper = scraper_instance
+        self.username = username
+        self.password = password
+        self.client = mqtt.Client()
+        self.connect_mqtt()
+        self.topic_prefix = "homeassistant/sensor/library"
+
+    def connect_mqtt(self):
+        if self.username and self.password:
+            self.client.username_pw_set(self.username, self.password)
+        self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
+        self.client.loop_start()
+
+    def publish_config(self):
+        """Publish Home Assistant MQTT autodiscovery configuration topics for sensors"""
+        sensors = [
+            {"id": "closest_due_date", "name": "Closest Due Date"},
+            {"id": "books_due_soon", "name": "Books Due in 5 Days"},
+            {"id": "books_due_total", "name": "Total Outstanding Books"},
+        ]
+        for sensor in sensors:
+            config_topic = f"{self.topic_prefix}/{sensor['id']}/config"
+            config_payload = {
+                "name": sensor["name"],
+                "state_topic": f"{self.topic_prefix}/{sensor['id']}/state",
+                "json_attributes_topic": (
+                    f"{self.topic_prefix}/books_due_total/attributes"
+                    if sensor["id"] == "books_due_total"
+                    else None
+                ),
+                "unique_id": f"library_{sensor['id']}",
+                "device": {
+                    "identifiers": ["library_books_tracker"],
+                    "name": "Library Books",
+                },
+            }
+            # Remove None values for clean config
+            config_payload = {k: v for k, v in config_payload.items() if v is not None}
+            self.client.publish(config_topic, json.dumps(config_payload), retain=True)
+
+    def process_books_data(self, books: List[Dict[str, str]]):
+        """Process scraped books data and publish states to HA"""
+        # Calculate the closest due date
+        current_date = datetime.now()
+        due_soon_threshold = current_date + timedelta(days=5)
+
+        books_due, books_due_within_5_days = 0, 0
+        closest_due_date = None
+
+        for book in books:
+            due_date = datetime.strptime(book["due_date"], "%Y-%m-%d")
+
+            # Update closest due date
+            if not closest_due_date or due_date < closest_due_date:
+                closest_due_date = due_date
+
+            # Count books that are due
+            if due_date >= current_date:
+                books_due += 1
+                if due_date <= due_soon_threshold:
+                    books_due_within_5_days += 1
+
+        # Formatted closest due date
+        closest_due_date_str = (
+            closest_due_date.strftime("%Y-%m-%d") if closest_due_date else None
+        )
+
+        # Publish state updates
+        self.client.publish(
+            f"{self.topic_prefix}/closest_due_date/state", closest_due_date_str
+        )
+        self.client.publish(
+            f"{self.topic_prefix}/books_due_soon/state", books_due_within_5_days
+        )
+        self.client.publish(f"{self.topic_prefix}/books_due_total/state", books_due)
+
+        # Publish full list of books as a JSON attribute for the "total" sensor
+        attributes_payload = {"books": books}
+        self.client.publish(
+            f"{self.topic_prefix}/books_due_total/attributes",
+            json.dumps(attributes_payload),
+        )
+
+    def run(self):
+        """Main loop to scrape and publish data"""
+        self.publish_config()
+        while True:
+            try:
+                # Run scraper and get outstanding books data
+                books_data = self.scraper.run()
+                self.process_books_data(books_data)
+            except Exception as e:
+                print(f"Error occurred: {e}")
+            finally:
+                time.sleep(1800)  # Scrape and publish every 30 minutes
+
+
 if __name__ == "__main__":
     # Example usage
-    scraper = WebScraper(
-        start_url="https://voebb.de/",
+    scraper = VoebbScraper(
         username="USER",
         password="PASS",
     )
