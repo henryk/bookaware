@@ -200,7 +200,7 @@ class VoebbScraperHomeAssistant:
     ):
         mqtt_service_info = requests.get("http://supervisor/services/mqtt").json()
 
-        with open("options.json") as f:
+        with open("/data/options.json") as f:
             self.config = json.load(f)
 
         self.mqtt_host = mqtt_service_info[0]["host"]
