@@ -3,9 +3,10 @@ FROM $BUILD_FROM
 
 RUN \
   apk add --no-cache \
-    python3 \
+    python3 py3-pip py3-virtualenv
 
+RUN python3 -m venv /venv
 COPY bookaware poetry.lock pyproject.toml /
-RUN pip install .
+RUN /venv/bin/pip install .
 
-CMD [ "python", "-m", "bookaware.main" ]
+CMD [ "/venv/bin/python", "-m", "bookaware.main" ]
