@@ -2,7 +2,7 @@ import datetime
 import json
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TypedDict
 from urllib.parse import urljoin
 
 import paho.mqtt.client as mqtt
@@ -11,6 +11,14 @@ import structlog
 from bs4 import BeautifulSoup
 
 logger = structlog.get_logger(__name__)
+
+
+class BookEntry(TypedDict):
+    due_date: str
+    library: str
+    title: str
+    hint: str
+    days_left: int
 
 
 class VoebbScraper:
@@ -144,7 +152,7 @@ class VoebbScraper:
             )
             raise Exception(f"Failed to follow link: {response.status_code}")
 
-    def extract_table(self) -> List[dict]:
+    def extract_table(self) -> List[BookEntry]:
         soup = BeautifulSoup(self.last_response, "lxml")
 
         items = []
@@ -166,7 +174,7 @@ class VoebbScraper:
             )
         return items
 
-    def run(self) -> None:
+    def run(self) -> list[BookEntry]:
         """
         Main method to execute the scraping process.
         """
@@ -179,36 +187,34 @@ class VoebbScraper:
             )
             self.find_and_follow_link('div#konto-services li a[href*="S*SZA"]')
             outstanding_books = self.extract_table()
-            import pprint
 
-            pprint.pprint(outstanding_books)
+            return outstanding_books
         except Exception as e:
             self.logger.error("Error occurred during scraping process", error=str(e))
-            print(f"Error: {e}")
+            raise
 
 
-class HomeAssistantMQTTDaemon:
+class VoebbScraperHomeAssistant:
     def __init__(
         self,
-        mqtt_broker: str,
-        mqtt_port: int,
-        scraper_instance,
-        username: str = None,
-        password: str = None,
     ):
-        self.mqtt_broker = mqtt_broker
-        self.mqtt_port = mqtt_port
-        self.scraper = scraper_instance
-        self.username = username
-        self.password = password
+        mqtt_service_info = requests.get("http://supervisor/services/mqtt").json()
+
+        with open("options.json") as f:
+            self.config = json.load(f)
+
+        self.mqtt_host = mqtt_service_info[0]["host"]
+        self.mqtt_port = mqtt_service_info[0]["port"]
+        self.mqtt_username = mqtt_service_info[0]["username"]
+        self.mqtt_password = mqtt_service_info[0]["password"]
+
         self.client = mqtt.Client()
         self.connect_mqtt()
-        self.topic_prefix = "homeassistant/sensor/library"
+        self.interval_seconds = self.config("interval_hours") * 60 * 60
 
     def connect_mqtt(self):
-        if self.username and self.password:
-            self.client.username_pw_set(self.username, self.password)
-        self.client.connect(self.mqtt_broker, self.mqtt_port, 60)
+        self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
+        self.client.connect(self.mqtt_host, self.mqtt_port, 60)
         self.client.loop_start()
 
     def publish_config(self):
@@ -219,12 +225,12 @@ class HomeAssistantMQTTDaemon:
             {"id": "books_due_total", "name": "Total Outstanding Books"},
         ]
         for sensor in sensors:
-            config_topic = f"{self.topic_prefix}/{sensor['id']}/config"
+            config_topic = f"{self.config['topic_prefix']}/{sensor['id']}/config"
             config_payload = {
                 "name": sensor["name"],
-                "state_topic": f"{self.topic_prefix}/{sensor['id']}/state",
+                "state_topic": f"{self.config['topic_prefix']}/{sensor['id']}/state",
                 "json_attributes_topic": (
-                    f"{self.topic_prefix}/books_due_total/attributes"
+                    f"{self.config['topic_prefix']}/books_due_total/attributes"
                     if sensor["id"] == "books_due_total"
                     else None
                 ),
@@ -267,17 +273,21 @@ class HomeAssistantMQTTDaemon:
 
         # Publish state updates
         self.client.publish(
-            f"{self.topic_prefix}/closest_due_date/state", closest_due_date_str
+            f"{self.config['topic_prefix']}/closest_due_date/state",
+            closest_due_date_str,
         )
         self.client.publish(
-            f"{self.topic_prefix}/books_due_soon/state", books_due_within_5_days
+            f"{self.config['topic_prefix']}/books_due_soon/state",
+            books_due_within_5_days,
         )
-        self.client.publish(f"{self.topic_prefix}/books_due_total/state", books_due)
+        self.client.publish(
+            f"{self.config['topic_prefix']}/books_due_total/state", books_due
+        )
 
         # Publish full list of books as a JSON attribute for the "total" sensor
         attributes_payload = {"books": books}
         self.client.publish(
-            f"{self.topic_prefix}/books_due_total/attributes",
+            f"{self.config['topic_prefix']}/books_due_total/attributes",
             json.dumps(attributes_payload),
         )
 
@@ -287,18 +297,16 @@ class HomeAssistantMQTTDaemon:
         while True:
             try:
                 # Run scraper and get outstanding books data
-                books_data = self.scraper.run()
+                scraper = VoebbScraper(
+                    username=self.config["username"], password=self.config["password"]
+                )
+                books_data = scraper.run()
                 self.process_books_data(books_data)
             except Exception as e:
                 print(f"Error occurred: {e}")
             finally:
-                time.sleep(1800)  # Scrape and publish every 30 minutes
+                time.sleep(self.interval_seconds)
 
 
 if __name__ == "__main__":
-    # Example usage
-    scraper = VoebbScraper(
-        username="USER",
-        password="PASS",
-    )
-    scraper.run()
+    VoebbScraperHomeAssistant().run()
