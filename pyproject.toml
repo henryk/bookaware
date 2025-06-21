@@ -1,0 +1,21 @@
+[project]
+name = "bookaware"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Henryk Plötz",email = "henryk@ploetzli.ch"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4 (>=4.13.4,<5.0.0)",
+    "requests (>=2.32.4,<3.0.0)",
+    "fake-useragent (>=2.2.0,<3.0.0)",
+    "lxml (>=5.4.0,<6.0.0)",
+    "structlog (>=25.4.0,<26.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
