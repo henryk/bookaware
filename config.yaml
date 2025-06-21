@@ -1,6 +1,6 @@
 name: "BookAware (VöBB)"
 description: "Get book information from voebb"
-version: "0.9.1"
+version: "0.9.2"
 slug: "bookaware_voebb"
 init: false
 arch:
@@ -12,10 +12,12 @@ arch:
 options:
   username: null
   password: null
-  interval_hors: 12
+  interval_hours: 12
   topic_prefix: homeassistant/sensor/bookaware_voebb
 schema:
   username: str
   password: str
+  interval_hours: int?
+  topic_prefix: str?
 services:
   - mqtt:need

@@ -1,6 +1,7 @@
 import datetime
 import json
 import time
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, TypedDict
 from urllib.parse import urljoin
@@ -198,7 +199,8 @@ class VoebbScraperHomeAssistant:
     def __init__(
         self,
     ):
-        mqtt_service_info = requests.get("http://supervisor/services/mqtt").json()
+        self.supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+        mqtt_service_info = requests.get("http://supervisor/services/mqtt", headers={"Authorization": f"Bearer ${self.supervisor_token}"}).json()
 
         with open("/data/options.json") as f:
             self.config = json.load(f)
