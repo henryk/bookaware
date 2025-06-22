@@ -207,7 +207,7 @@ class VoebbScraperHomeAssistant:
         self.logger.info("Have config", config=self.config)
 
         mqtt_service_info = {}
-        for x in "host", "port", "username", "password", "topic_prefix":
+        for x in "host", "port", "username", "password":
             mqtt_service_info[x] = self.config[f"mqtt_{x}"]
 
         if len(mqtt_service_info) != 4:
