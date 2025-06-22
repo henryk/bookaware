@@ -1,8 +1,7 @@
-import datetime
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, TypedDict
 from urllib.parse import urljoin
 
@@ -160,7 +159,7 @@ class VoebbScraper:
         for tr in soup.select("#resptable-1 tbody tr"):
             tds = tr.find_all("td")
             date_str = tds[1].get_text(strip=True)
-            due_date = datetime.datetime.strptime(date_str, "%d.%m.%Y").date()
+            due_date = datetime.strptime(date_str, "%d.%m.%Y").date()
             library = tds[2].get_text(strip=True)
             title = " ".join(tds[3].stripped_strings)
             hint = tds[4].get_text(strip=True)
@@ -170,7 +169,7 @@ class VoebbScraper:
                     "library": library,
                     "title": title,
                     "hint": hint,
-                    "days_left": (due_date - datetime.date.today()).days,
+                    "days_left": (due_date - date.today()).days,
                 }
             )
         return items
