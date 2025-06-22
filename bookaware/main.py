@@ -228,7 +228,7 @@ class VoebbScraperHomeAssistant:
 
         self.client = mqtt.Client()
         self.connect_mqtt()
-        self.interval_seconds = self.config("interval_hours") * 60 * 60
+        self.interval_seconds = self.config["interval_hours"] * 60 * 60
 
     def connect_mqtt(self):
         self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
