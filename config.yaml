@@ -1,6 +1,6 @@
 name: "BookAware (VöBB)"
 description: "Get book information from voebb"
-version: "0.9.4"
+version: "0.9.5"
 slug: "bookaware_voebb"
 init: false
 arch:
@@ -21,3 +21,4 @@ schema:
   topic_prefix: str?
 services:
   - mqtt:need
+hassio_api: true
