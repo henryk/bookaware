@@ -1,6 +1,6 @@
 name: "BookAware (VöBB)"
 description: "Get book information from voebb"
-version: "0.9.3"
+version: "0.9.4"
 slug: "bookaware_voebb"
 init: false
 arch:
