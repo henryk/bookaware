@@ -206,6 +206,7 @@ class VoebbScraperHomeAssistant:
             "http://supervisor/services/mqtt",
             headers={"Authorization": f"Bearer {self.supervisor_token}"},
         ).json()
+        self.logger.info("Have MQTT service info", info=mqtt_service_info)
 
         with open("/data/options.json") as f:
             self.config = json.load(f)
