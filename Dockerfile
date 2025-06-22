@@ -13,4 +13,4 @@ COPY bookaware bookaware
 RUN pwd && ls -lh
 RUN /venv/bin/pip install .
 
-CMD [ "/venv/bin/python", "-m", "bookaware.main" ]
+CMD [ "/usr/bin/with-contenv", "/venv/bin/python", "-m", "bookaware.main" ]
