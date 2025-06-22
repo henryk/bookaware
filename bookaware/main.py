@@ -207,7 +207,8 @@ class VoebbScraperHomeAssistant:
 
         mqtt_service_info = {}
         for x in "host", "port", "username", "password":
-            mqtt_service_info[x] = self.config[f"mqtt_{x}"]
+            if f"mqtt_{x}" in self.config:
+                mqtt_service_info[x] = self.config[f"mqtt_{x}"]
 
         if len(mqtt_service_info) != 4:
             self.logger.info("Getting MQTT configuration", token=self.supervisor_token)
@@ -239,7 +240,7 @@ class VoebbScraperHomeAssistant:
         sensors = [
             {"id": "closest_due_date", "name": "Closest Due Date"},
             {"id": "books_due_soon", "name": "Books Due in 5 Days"},
-            {"id": "books_due_total", "name": "Total Outstanding Books"},
+            {"id": "books_open_total", "name": "Total Outstanding Books"},
         ]
         for sensor in sensors:
             config_topic = f"{self.config['topic_prefix']}/{sensor['id']}/config"
@@ -247,8 +248,8 @@ class VoebbScraperHomeAssistant:
                 "name": sensor["name"],
                 "state_topic": f"{self.config['topic_prefix']}/{sensor['id']}/state",
                 "json_attributes_topic": (
-                    f"{self.config['topic_prefix']}/books_due_total/attributes"
-                    if sensor["id"] == "books_due_total"
+                    f"{self.config['topic_prefix']}/books_open_total/attributes"
+                    if sensor["id"] == "books_open_total"
                     else None
                 ),
                 "unique_id": f"library_{sensor['id']}",
@@ -261,50 +262,39 @@ class VoebbScraperHomeAssistant:
             config_payload = {k: v for k, v in config_payload.items() if v is not None}
             self.client.publish(config_topic, json.dumps(config_payload), retain=True)
 
-    def process_books_data(self, books: List[Dict[str, str]]):
+    def process_books_data(self, books: List[BookEntry]):
         """Process scraped books data and publish states to HA"""
         # Calculate the closest due date
-        current_date = datetime.now()
-        due_soon_threshold = current_date + timedelta(days=5)
+        due_soon_threshold = (datetime.now() + timedelta(days=5)).date().isoformat()
 
-        books_due, books_due_within_5_days = 0, 0
-        closest_due_date = None
+        books_due_within_5_days = 0
+        closest_due_date: Optional[str] = None
 
         for book in books:
-            due_date = datetime.strptime(book["due_date"], "%Y-%m-%d")
-
             # Update closest due date
-            if not closest_due_date or due_date < closest_due_date:
-                closest_due_date = due_date
+            if not closest_due_date or book["due_date"] < closest_due_date:
+                closest_due_date = book["due_date"]
 
-            # Count books that are due
-            if due_date >= current_date:
-                books_due += 1
-                if due_date <= due_soon_threshold:
-                    books_due_within_5_days += 1
-
-        # Formatted closest due date
-        closest_due_date_str = (
-            closest_due_date.strftime("%Y-%m-%d") if closest_due_date else None
-        )
+            if book["due_date"] <= due_soon_threshold:
+                books_due_within_5_days += 1
 
         # Publish state updates
         self.client.publish(
             f"{self.config['topic_prefix']}/closest_due_date/state",
-            closest_due_date_str,
+            closest_due_date,
         )
         self.client.publish(
             f"{self.config['topic_prefix']}/books_due_soon/state",
             books_due_within_5_days,
         )
         self.client.publish(
-            f"{self.config['topic_prefix']}/books_due_total/state", books_due
+            f"{self.config['topic_prefix']}/books_open_total/state", len(books)
         )
 
         # Publish full list of books as a JSON attribute for the "total" sensor
         attributes_payload = {"books": books}
         self.client.publish(
-            f"{self.config['topic_prefix']}/books_due_total/attributes",
+            f"{self.config['topic_prefix']}/books_open_total/attributes",
             json.dumps(attributes_payload),
         )
 
