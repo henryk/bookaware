@@ -1,6 +1,6 @@
 name: "BookAware (VöBB)"
 description: "Get book information from voebb"
-version: "0.9.7"
+version: "0.9.8"
 slug: "bookaware_voebb"
 init: false
 arch:
@@ -19,5 +19,9 @@ schema:
   password: str
   interval_hours: int?
   topic_prefix: str?
+  mqtt_host: str?
+  mqtt_port: int?
+  mqtt_username: str?
+  mqtt_password: str?
 services:
   - mqtt:need

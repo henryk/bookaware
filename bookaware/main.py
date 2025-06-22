@@ -201,16 +201,25 @@ class VoebbScraperHomeAssistant:
     ):
         self.logger = logger.bind()
         self.supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
-        self.logger.info("Getting MQTT configuration", token=self.supervisor_token)
-        mqtt_service_info = requests.get(
-            "http://supervisor/services/mqtt",
-            headers={"Authorization": f"Bearer {self.supervisor_token}"},
-        ).json()
-        self.logger.info("Have MQTT service info", info=mqtt_service_info)
 
         with open("/data/options.json") as f:
             self.config = json.load(f)
         self.logger.info("Have config", config=self.config)
+
+        mqtt_service_info = {}
+        for x in "host", "port", "username", "password", "topic_prefix":
+            mqtt_service_info[x] = self.config[f"mqtt_{x}"]
+
+        if len(mqtt_service_info) != 4:
+            self.logger.info("Getting MQTT configuration", token=self.supervisor_token)
+            response = requests.get(
+                "http://supervisor/services/mqtt",
+                headers={"Authorization": f"Bearer {self.supervisor_token}"},
+            ).json()
+            if response.get("result", None) == "error":
+                raise Exception("Failed to get MQTT service info")
+            mqtt_service_info = mqtt_service_info | response
+        self.logger.info("Have MQTT service info", info=mqtt_service_info)
 
         self.mqtt_host = mqtt_service_info["host"]
         self.mqtt_port = mqtt_service_info["port"]
