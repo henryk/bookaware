@@ -243,22 +243,53 @@ class VoebbScraperHomeAssistant:
         self.mqtt_password = mqtt_service_info["password"]
 
         # MQTT client setup
-        self.client = mqtt.Client()
+        self.client = mqtt.Client(protocol=mqtt.MQTTv5)
         # Configure LWT topic and payloads
         lwt_topic = f"{self.config['topic_prefix']}/availability"
         self.client.will_set(
             lwt_topic, payload="unavailable", qos=1, retain=True
         )
         self.connect_mqtt()
-        # Publish initial "available"
-        self.client.publish(lwt_topic, payload="available", qos=1, retain=True)
 
         self.interval_seconds = self.config["interval_hours"] * 60 * 60
 
     def connect_mqtt(self):
+        """Configure and connect MQTT client with proper callbacks"""
+        # Set up callbacks
+        self.client.on_connect = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+
+        # Set credentials
         self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
-        self.client.connect(self.mqtt_host, self.mqtt_port, 60)
-        self.client.loop_start()
+
+        # Enable automatic reconnection
+        self.client.reconnect_delay_set(min_delay=1, max_delay=120)
+
+        try:
+            self.client.connect(self.mqtt_host, self.mqtt_port, keepalive=60)
+            self.client.loop_start()
+        except Exception as e:
+            self.logger.error("Failed to connect to MQTT broker", error=str(e))
+            # Connection will be retried automatically
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties):
+        """Callback for when the client receives a CONNACK response from the server"""
+        if reason_code == 0:
+            self.logger.info("Connected to MQTT broker")
+            # Publish availability status
+            lwt_topic = f"{self.config['topic_prefix']}/availability"
+            self.client.publish(lwt_topic, payload="available", qos=1, retain=True)
+            # Re-publish config in case we reconnected
+            self.publish_config()
+        else:
+            self.logger.error("Failed to connect to MQTT broker", return_code=reason_code)
+
+    def _on_disconnect(self, client, userdata, reason_code, properties):
+        """Callback for when the client disconnects from the server"""
+        if reason_code != 0:
+            self.logger.warning("Unexpected MQTT disconnection", reason_code=reason_code)
+        else:
+            self.logger.info("Disconnected from MQTT broker")
 
     def publish_config(self):
         """Publish Home Assistant MQTT autodiscovery configuration topics for sensors"""
@@ -310,13 +341,16 @@ class VoebbScraperHomeAssistant:
         self.client.publish(
             f"{self.config['topic_prefix']}/closest_due_date/state",
             closest_due_date,
+            retain=True,
         )
         self.client.publish(
             f"{self.config['topic_prefix']}/books_due_soon/state",
             books_due_within_5_days,
+            retain=True,
         )
         self.client.publish(
-            f"{self.config['topic_prefix']}/books_open_total/state", len(books)
+            f"{self.config['topic_prefix']}/books_open_total/state", len(books),
+            retain=True,
         )
 
         # Publish full list of books as a JSON attribute for the "total" sensor
@@ -324,6 +358,7 @@ class VoebbScraperHomeAssistant:
         self.client.publish(
             f"{self.config['topic_prefix']}/books_open_total/attributes",
             json.dumps(attributes_payload),
+            retain=True,
         )
 
     def run(self):
