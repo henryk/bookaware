@@ -1,14 +1,18 @@
 import json
 import os
+import sys
 import time
+import shelve
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, TypedDict
 from urllib.parse import urljoin
 
 import paho.mqtt.client as mqtt
 import requests
+import select
 import structlog
 from bs4 import BeautifulSoup
+import fcntl
 
 logger = structlog.get_logger(__name__)
 
@@ -50,7 +54,7 @@ class VoebbScraper:
             raise Exception(f"Failed to load page: {response.status_code}")
 
     def find_and_submit_form(
-        self, values: Dict[str, str], button: Optional[str] = None
+            self, values: Dict[str, str], button: Optional[str] = None
     ) -> requests.Response:
         """
         Find the first form on the page and submit login credentials.
@@ -196,14 +200,26 @@ class VoebbScraper:
 
 class VoebbScraperHomeAssistant:
     def __init__(
-        self,
+            self,
     ):
         self.logger = logger.bind()
+        self.stdin_buffer = ""
         self.supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+        self.last_check = 0
 
         with open("/data/options.json") as f:
             self.config = json.load(f)
+
+        # Set stdin to non-blocking mode
+        fd = sys.stdin.fileno()
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
         self.logger.info("Have config", config=self.config)
+
+        # Initialize the state storage using shelve
+        self.state = shelve.open("/data/state.db")
+        self.logger.info("Have state", state=dict(self.state))
+        self.next_scrape = self.state.get("next_scrape", time.time())
 
         mqtt_service_info = {}
         for x in "host", "port", "username", "password":
@@ -226,8 +242,17 @@ class VoebbScraperHomeAssistant:
         self.mqtt_username = mqtt_service_info["username"]
         self.mqtt_password = mqtt_service_info["password"]
 
+        # MQTT client setup
         self.client = mqtt.Client()
+        # Configure LWT topic and payloads
+        lwt_topic = f"{self.config['topic_prefix']}/availability"
+        self.client.will_set(
+            lwt_topic, payload="unavailable", qos=1, retain=True
+        )
         self.connect_mqtt()
+        # Publish initial "available"
+        self.client.publish(lwt_topic, payload="available", qos=1, retain=True)
+
         self.interval_seconds = self.config["interval_hours"] * 60 * 60
 
     def connect_mqtt(self):
@@ -237,30 +262,33 @@ class VoebbScraperHomeAssistant:
 
     def publish_config(self):
         """Publish Home Assistant MQTT autodiscovery configuration topics for sensors"""
+        base = self.config['topic_prefix']
+        availability = {
+            "topic": f"{base}/availability",
+            "payload_available": "available",
+            "payload_not_available": "unavailable",
+            "value_template": "{{ value_json.state }}"
+        }
         sensors = [
             {"id": "closest_due_date", "name": "Closest Due Date"},
             {"id": "books_due_soon", "name": "Books Due in 5 Days"},
             {"id": "books_open_total", "name": "Total Outstanding Books"},
         ]
+
         for sensor in sensors:
-            config_topic = f"{self.config['topic_prefix']}/{sensor['id']}/config"
-            config_payload = {
-                "name": sensor["name"],
-                "state_topic": f"{self.config['topic_prefix']}/{sensor['id']}/state",
-                "json_attributes_topic": (
-                    f"{self.config['topic_prefix']}/books_open_total/attributes"
-                    if sensor["id"] == "books_open_total"
-                    else None
-                ),
+            topic = f"{base}/{sensor['id']}"
+            config_topic = f"{topic}/config"
+            payload = {
+                "name": sensor['name'],
+                "state_topic": f"{topic}/state",
                 "unique_id": f"library_{sensor['id']}",
-                "device": {
-                    "identifiers": ["library_books_tracker"],
-                    "name": "Library Books",
-                },
+                "device": {"identifiers": ["library_books_tracker"], "name": "Library Books"},
+                "availability": [availability]
             }
-            # Remove None values for clean config
-            config_payload = {k: v for k, v in config_payload.items() if v is not None}
-            self.client.publish(config_topic, json.dumps(config_payload), retain=True)
+            if sensor['id'] == 'books_open_total':
+                payload['json_attributes_topic'] = f"{base}/books_open_total/attributes"
+
+            self.client.publish(config_topic, json.dumps(payload), retain=True)
 
     def process_books_data(self, books: List[BookEntry]):
         """Process scraped books data and publish states to HA"""
@@ -301,18 +329,78 @@ class VoebbScraperHomeAssistant:
     def run(self):
         """Main loop to scrape and publish data"""
         self.publish_config()
-        while True:
-            try:
-                # Run scraper and get outstanding books data
-                scraper = VoebbScraper(
-                    username=self.config["username"], password=self.config["password"]
-                )
-                books_data = scraper.run()
-                self.process_books_data(books_data)
-            except Exception as e:
-                print(f"Error occurred: {e}")
-            finally:
-                time.sleep(self.interval_seconds)
+        try:
+            while True:
+                try:
+                    if self.should_scrape:
+                        self.run_scrape()
+
+                    # Wait at least 5 seconds
+                    wait_time = max(self.next_scrape - time.time(), 5)
+                    self.logger.info("Waiting", wait_time=wait_time)
+
+                    ready, _, _ = select.select([sys.stdin], [], [], wait_time)
+
+                    if ready:  # Check if stdin has data
+                        # Read available data into the buffer
+                        data = sys.stdin.read(1024)  # Read up to 1024 bytes (can adjust as needed)
+                        self.stdin_buffer += data
+
+                        # Process full lines from the buffer
+                        while "\n" in self.stdin_buffer:  # Check if a full line exists
+                            line, self.stdin_buffer = self.stdin_buffer.split("\n", 1)
+                            line = line.strip()
+                            if line:  # Only process non-empty lines
+                                self.process_input(line)
+
+                except Exception as e:
+                    print(f"Error occurred: {e}")
+        finally:
+            # Close shelve storage
+            self.state.close()
+
+    def process_input(self, line: str):
+        try:
+            data = json.loads(line)
+            self.logger.info("Received JSON input", data=data)
+            if refresh_value := data.get("refresh", None):
+                now_ = time.time()
+                if refresh_value == "force":
+                    self.state["next_scrape"] = now_
+                else:
+                    # Normal refresh only if at least 10 minutes have passed
+                    if self.state.get("last_scrape", 0) < now_ - 600:
+                        self.next_scrape = self.state["next_scrape"] = now_
+                    else:
+                        self.logger.info("Skipping refresh too soon")
+        except json.JSONDecodeError as e:
+            self.logger.error("Failed to decode JSON input", line=line, error=str(e))
+
+    @property
+    def should_scrape(self):
+        now_ = time.time()
+        if now_ >= self.next_scrape:
+            self.logger.info("Scraping due")
+            return True
+        if now_ < self.state.get("last_scrape", 0) or now_ < self.last_check:
+            # Clock moved backwards
+            self.logger.info("Clock moved backwards, forcing scrape")
+            return True
+        self.last_check = now_
+        return False
+
+    def run_scrape(self):
+        now_ = time.time()
+        self.state["last_scrape"] = now_
+        self.next_scrape = self.state["next_scrape"] = now_ + self.interval_seconds
+        self.logger.info("Scheduling next scrape", now_=now_, next_scrape=self.state["next_scrape"])
+        self.state.sync()
+        # Run scraper and get outstanding books data
+        scraper = VoebbScraper(
+            username=self.config["username"], password=self.config["password"]
+        )
+        books_data = scraper.run()
+        self.process_books_data(books_data)
 
 
 if __name__ == "__main__":
