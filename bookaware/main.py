@@ -177,6 +177,18 @@ class VoebbScraper:
                 }
             )
         return items
+    
+    def has_checkouts(self) -> bool:
+        soup = BeautifulSoup(self.last_response, "lxml")
+        # if table with service buttons exist, but "current checkouts"
+        # link does not exist, assume no current checkouts
+        # if table is missing, assume error
+        if soup.select_one("div#konto-services"):
+            if soup.select_one('div#konto-services li a[href*="S*SZA"]'):
+                return True
+            else:
+                return False
+        raise Exception("Self-service options not present, login or system failure?")
 
     def run(self) -> list[BookEntry]:
         """
@@ -189,8 +201,11 @@ class VoebbScraper:
             self.find_and_submit_form(
                 {"L#AUSW": self.username, "LPASSW": self.password}, "LLOGIN"
             )
-            self.find_and_follow_link('div#konto-services li a[href*="S*SZA"]')
-            outstanding_books = self.extract_table()
+            if self.has_checkouts():
+                self.find_and_follow_link('div#konto-services li a[href*="S*SZA"]')
+                outstanding_books = self.extract_table()
+            else:
+                outstanding_books = []
 
             return outstanding_books
         except Exception as e:
